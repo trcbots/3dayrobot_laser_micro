@@ -43,7 +43,7 @@
 // throttle constants
 #define THROTTLE_ZERO     170
 #define THROTTLE_LOW      160
-#define THROTTLE_SENSIBLE 140
+#define THROTTLE_SENSIBLE 120
 #define THROTTLE_MAX      90
 
 // steering constants
@@ -56,10 +56,7 @@
 #define CRANK_TIME 1000
 
 // init actuators
-Servo brakeServo;
 Servo throttleServo;
-Servo gearServo;
-//Servo steeringServo;
 
 // init state machine
 int state = PARK;
@@ -68,9 +65,7 @@ int state = PARK;
 int gear_lever_state = GEAR_P;
 int brake_state = BRAKE_ZERO;
 int steering_state = STEER_MIDDLE;
-int delay_counter = 0;
-int dead_man_counter = 0;
-int prev_stick = 0;
+int start_delay_counter = 0;
 
 // RC vars
 int rc_throttle = THROTTLE_ZERO;
@@ -100,20 +95,13 @@ void setup()
     pinMode(Brake_Pot, INPUT);
     pinMode(Gear_Pot, INPUT);
     pinMode(Steering_Pot, INPUT);
-//    pinMode(Gear_PWM_Out, OUTPUT);
-//    pinMode(Gear_Dir_Out, OUTPUT);
-//    pinMode(Brake_PWM_Out, OUTPUT);
-//    pinMode(Brake_Dir_Out, OUTPUT);
 
     // attach servos
     throttleServo.attach(Throttle_Out);
-//    gearServo.attach(Gear_PWM_Out);
-//    steeringServo.attach(Steering_Out);
     
-    // init servos
-    brake_state = BRAKE_ZERO;
+    // init actuators
     throttleServo.write(THROTTLE_ZERO);
-//    steeringServo.write(STEER_MIDDLE);
+    brake_state = BRAKE_ZERO;
     gear_lever_state = GEAR_P;
     steering_state = STEER_MIDDLE;
 
@@ -124,13 +112,10 @@ void setup()
 
 void loop()
 {  
-    // left stick from RC controller
+    // read throttle and brake (left stick) from RC receiver
     int ch_2_stick = pulseIn(RC_CH_2, HIGH, 25000);
     delay(5);
     int ch_2_PWM = RCToThrottle(ch_2_stick);
-
-    if (ch_2_stick == prev_stick) dead_man_counter++;
-    else dead_man_counter = 0;
     
     // stick down, brakes on
     if (ch_2_PWM > 100)
@@ -151,27 +136,16 @@ void loop()
         rc_brake = BRAKE_ZERO;
     }
 
-// CAN'T READ MORE THAN TWO PWM AT ONCE
-//    // igntion from RC controller
-//    int ch_3_ignition = pulseIn(RC_CH_3, HIGH, 25000);
-//    Serial.print(ch_3_ignition);
-//    Serial.print("\t");
-//    Serial.println(rc_throttle);
-//    bool ignition_flag = false;    
-//
-//    if (ch_3_ignition > 1750) ignition_flag = true;
-//    else ignition_flag = false;
-
+    // read steering (right stick) from RC receiver
     int ch_1_steering = pulseIn(RC_CH_1, HIGH, 25000);
     delay(5);
-    int ch_1_PWM = RCToSteering(ch_1_steering);
+    rc_steering = RCToSteering(ch_1_steering);
     
 //    Serial.print("steering: ");
 //    Serial.print(ch_1_PWM);
 //    Serial.print("\t");
 //    Serial.println(ch_1_steering);
-    
-    rc_steering = ch_1_PWM;
+
 
     // gear and brake loops select
     setGear(gear_lever_state);
@@ -210,10 +184,10 @@ void loop()
             brake_state = rc_brake;
             throttleServo.write(rc_throttle);
             steering_state = rc_steering;
-//            steeringServo.write(STEER_MIDDLE);
 
-            delay_counter++;
-            if (delay_counter > 200) state = START_CAR;
+            // wait for 200 cycles then start the car
+            start_delay_counter++;
+            if (start_delay_counter > 200) state = START_CAR;
 
             break;
         }
@@ -222,7 +196,6 @@ void loop()
             // brakes on, throttle off
             brake_state = BRAKE_MAX;
             throttleServo.write(THROTTLE_ZERO);
-//            steeringServo.write(STEER_MIDDLE);
             steering_state = rc_steering;
             
             // start engine and put in gear
@@ -230,7 +203,7 @@ void loop()
             delay(1000);
             gear_lever_state = GEAR_D;
 
-            // boot Jetson
+            // boot Jetson - consider whether these delays are safe - might need a counter to make it asynch
 //            delay(500);
 //            digitalWrite(Jetson_Boot, HIGH);
 //            delay(500);
@@ -239,38 +212,12 @@ void loop()
             state = DRIVE_RC;
             break;
         }
-//        case NEUTRAL_RC:
-//        {
-//            setBrake.write(rc_brake);
-//            throttleServo.write(rc_throttle);
-//
-//            // if RC asks for DRIVE_RC
-//                // setBrakes(BRAKE_ZERO);
-//                // setThrottle(THROTTLE_ZERO);
-//                // gear_lever_state = (GEAR_D);
-//                // state = DRIVE_RC;
-//
-//            // if RC asks for DRIVE_AI
-//                // setBrakes(BRAKE_ZERO);
-//                // setThrottle(THROTTLE_ZERO);
-//                // setSteering(STEER_MIDDLE);
-//                // gear_lever_state = (GEAR_D);
-//                // state = DRIVE_AI;
-//            break;
-//        }
         case DRIVE_RC:
         {
             // set/actuate all outputs
             brake_state = rc_brake;
             throttleServo.write(rc_throttle);
-//            steeringServo.write(rc_steering);
             steering_state = rc_steering;
-
-//            if (ignition_flag)
-//            {
-//                ignition_flag = false;
-//                state = STOP_CAR;
-//            }
 
             // if request AI transition
                 // setBrakes(BRAKE_ZERO);
@@ -278,6 +225,12 @@ void loop()
                 // setSteering(STEER_MIDDLE);
                 // gear_lever_state = (GEAR_D);
                 // state = DRIVE_AI;
+
+            // if request stop car
+                // set to stop state
+
+            // if request reverse
+                // set to reverse state
             break;
         }
         case DRIVE_AI:
@@ -304,9 +257,33 @@ void loop()
                           
             break;
         }
-//        case REVERSE_RC:
+//        case NEUTRAL_RC:  // neutral state, currently unused
 //        {
+//            setBrake.write(rc_brake);
+//            throttleServo.write(rc_throttle);
 //
+//            // if RC asks for DRIVE_RC
+//                // setBrakes(BRAKE_ZERO);
+//                // setThrottle(THROTTLE_ZERO);
+//                // gear_lever_state = (GEAR_D);
+//                // state = DRIVE_RC;
+//
+//            // if RC asks for DRIVE_AI
+//                // setBrakes(BRAKE_ZERO);
+//                // setThrottle(THROTTLE_ZERO);
+//                // setSteering(STEER_MIDDLE);
+//                // gear_lever_state = (GEAR_D);
+//                // state = DRIVE_AI;
+//            break;
+//        }
+//        case REVERSE_RC:  // reverse state, currently unused.
+//        {
+//            // put gear in reverse
+//            brake_state = rc_brake;
+//            throttleServo.write(rc_throttle);
+//            steering_state = rc_steering;
+//
+//            // if request drive forward, put in DRIVE_RC state
 //            break;
 //        }
 //        case STOP_CAR:
@@ -322,7 +299,7 @@ void loop()
 //        }
         default:
         {
-            // should not ever end up in this state
+            // included for safety, should not ever end up in this state
             // setBrakes(BRAKE_MAX);
             // setThrottle(THROTTLE_ZERO);
             break;
@@ -356,17 +333,20 @@ void setBrake(int newpos)
     
     if ( newpos <= (oldpos - BRAKE_TOLERANCE) ) 
     {
+        // actuate brakes off
         Serial2.write(128);
     } 
     else if ( newpos > (oldpos + BRAKE_TOLERANCE) ) 
     {
+        // actuate brakes on
         Serial2.write(255);
     }
-    else Serial2.write(192);
+    else Serial2.write(192);  // else stop brake motor
 }
 
 void setGear(int gearState)
 {
+    // calibrate gear positions with the numbers below
     switch (gearState) 
     {
         case GEAR_P:
@@ -396,17 +376,20 @@ void moveGearActuator(int newpos)
     // 1 = full reverse
     // 65 = stop
     // 127 = full forward
+    
     int oldpos = analogRead(Gear_Pot);
 
     if ( newpos <= (oldpos - GEAR_TOLERANCE) )
     {
+        // pull shifter back
         Serial2.write(1);
     } 
     else if ( newpos > (oldpos + GEAR_TOLERANCE) ) 
     {
+        // push shifter forward
         Serial2.write(127);
     }
-    else Serial2.write(64);
+    else Serial2.write(64);   // else stop shifter motor
 }
 
 void setSteering(int newpos)
@@ -417,31 +400,20 @@ void setSteering(int newpos)
     // 255 = full forward
 
     int oldpos = analogRead(Steering_Pot);
-    int rate = abs(newpos - oldpos)/8;
-    if ( rate > 63 ) rate = 63;
-
-    Serial.print(newpos);
-    Serial.print("\t");
-    Serial.print(oldpos);
-    Serial.print("\t");
-    Serial.print(rate);
-    Serial.print("\t");
+    int rate = abs(newpos - oldpos)/8;      // crude proportional steering rate control (makes it less twitchy)
+    if ( rate > 63 ) rate = 63;             // then clamp value to max possible steering rate
   
     if ( newpos <= (oldpos - STEER_TOLERANCE) )
     {
         // steer right
-        Serial.print("steer right\t");
-        Serial.print(192 + rate);
         Serial3.write(192 + rate);
     } 
     else if ( newpos > (oldpos + STEER_TOLERANCE) ) 
     {
         // steer left
-        Serial.print("steer left\t");
-        Serial.print(192 - rate);
         Serial3.write(192 - rate);
     }
-    else Serial3.write(192);
+    else Serial3.write(192);  // else stop steering motor
 
     Serial.println();
 }
